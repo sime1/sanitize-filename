@@ -9,18 +9,19 @@ lazy_static! {
     static ref ILLEGAL_RE: Regex = Regex::new(r#"[/\?<>\\:\*\|":]"#).unwrap();
     static ref CONTROL_RE: Regex = Regex::new(r#"[\x00-\x1f\x80-\x9f]"#).unwrap();
     static ref RESERVED_RE: Regex = Regex::new(r#"^\.+$"#).unwrap();
-    static ref WINDOWS_RESERVED_RE: Regex = RegexBuilder::new(r#"(?i)^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$"#)
-        .case_insensitive(true)
-        .build()
-        .unwrap();
-    static ref WINDOWS_TRAILING_RE: Regex = Regex::new(r#"^\.+$"#).unwrap();
+    static ref WINDOWS_RESERVED_RE: Regex =
+        RegexBuilder::new(r#"(?i)^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$"#)
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+    static ref WINDOWS_TRAILING_RE: Regex = Regex::new(r#"[\. ]+$"#).unwrap();
 }
 
 #[derive(Clone)]
 pub struct Options<'a> {
     pub windows: bool,
     pub truncate: bool,
-    pub replacement: &'a str
+    pub replacement: &'a str,
 }
 
 impl<'a> Default for Options<'a> {
@@ -28,7 +29,7 @@ impl<'a> Default for Options<'a> {
         Options {
             windows: cfg!(windows),
             truncate: true,
-            replacement: ""
+            replacement: "",
         }
     }
 }
@@ -38,19 +39,24 @@ pub fn sanitize<S: AsRef<str>>(name: S) -> String {
 }
 
 pub fn sanitize_with_options<S: AsRef<str>>(name: S, options: Options) -> String {
-
-    let Options { windows, truncate, replacement } = options;
+    let Options {
+        windows,
+        truncate,
+        replacement,
+    } = options;
     let name = name.as_ref();
-    
+
     let name = ILLEGAL_RE.replace_all(&name, replacement);
     let name = CONTROL_RE.replace_all(&name, replacement);
     let name = RESERVED_RE.replace(&name, replacement);
-    
+
     let collect = |name: ::std::borrow::Cow<str>| {
         if truncate && name.len() > 255 {
             let mut end = 255;
             loop {
-                if name.is_char_boundary(end) { break; }
+                if name.is_char_boundary(end) {
+                    break;
+                }
                 end -= 1;
             }
             String::from(&name[..end])
@@ -66,12 +72,10 @@ pub fn sanitize_with_options<S: AsRef<str>>(name: S, options: Options) -> String
     } else {
         collect(name)
     }
-    
 }
 
 #[cfg(test)]
 mod tests {
-
 
     // From https://github.com/parshap/node-sanitize-filename/blob/master/test.js
     static NAMES: &'static [&'static str] = &[
@@ -116,10 +120,12 @@ mod tests {
         "../../foobar",
         "./././foobar",
         "|*.what",
-        "LPT9.asdf"
+        "LPT9.asdf",
+        "trailing...",
+        "trailing   ",
     ];
 
-    static NAMES_CLEANED: &'static [&'static str] = &[
+    static NAMES_CLEANED_UNIX: &'static [&'static str] = &[
         "the quick brown fox jumped over the lazy dog",
         "résumé",
         "helloworld",
@@ -161,25 +167,90 @@ mod tests {
         "....foobar",
         "...foobar",
         ".what",
-        ""
+        "LPT9.asdf",
+        "trailing...",
+        "trailing   ",
+    ];
+
+    static NAMES_CLEANED_WINDOWS: &'static [&'static str] = &[
+        "the quick brown fox jumped over the lazy dog",
+        "résumé",
+        "helloworld",
+        "helloworld",
+        "semi;colon.js",
+        ";leading-semi.js",
+        "slash.js",
+        "slash.js",
+        "colon.js",
+        "star.js",
+        "question.js",
+        "quote.js",
+        "singlequote'.js",
+        "brackets.js",
+        "ppes.js",
+        "plus+.js",
+        "'five and sixseven'.js",
+        " space at front",
+        "space at end",
+        ".period",
+        "period",
+        "relativepathtosomedir",
+        "abspathtosomedir",
+        "~.notsshauthorized_keys",
+        "",
+        "hw",
+        "hw",
+        "hw",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ".foobar",
+        "..foobar",
+        "....foobar",
+        "...foobar",
+        ".what",
+        "",
+        "trailing",
+        "trailing",
     ];
 
     #[test]
-    fn it_works() {
-
+    fn windows() {
         let options = super::Options {
             windows: true,
             truncate: true,
-            replacement: ""
+            replacement: "",
         };
 
-        for (idx, name) in NAMES.iter().enumerate() {
-            assert_eq!(super::sanitize_with_options(name, options.clone()), NAMES_CLEANED[idx]);
+        compare_names(NAMES, NAMES_CLEANED_WINDOWS, options);
+    }
+
+    #[test]
+    fn unix() {
+        let options = super::Options {
+            windows: false,
+            truncate: true,
+            replacement: "",
+        };
+
+        compare_names(NAMES, NAMES_CLEANED_UNIX, options);
+    }
+
+    fn compare_names<'a>(names: &'a [&'a str], expected: &'a [&'a str], options: super::Options) {
+        for (idx, name) in names.iter().enumerate() {
+            assert_eq!(
+                super::sanitize_with_options(name, options.clone()),
+                expected[idx]
+            );
         }
 
         let long = ::std::iter::repeat('a').take(300).collect::<String>();
         let shorter = ::std::iter::repeat('a').take(255).collect::<String>();
         assert_eq!(super::sanitize_with_options(long, options.clone()), shorter);
-
     }
 }
